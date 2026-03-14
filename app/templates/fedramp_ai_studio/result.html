@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+
+{% block title %}FedRAMP AI Studio — Narrative Result{% endblock %}
+
+{% block content %}
+
+<div style="margin-bottom: 1rem;">
+    <a href="/ui/" class="btn btn-secondary" style="font-size: 0.85rem;">&larr; Back to Dashboard</a>
+</div>
+
+{% if error %}
+<div class="alert alert-error">
+    <strong>Error:</strong> {{ error }}
+</div>
+{% endif %}
+
+<div class="grid-2">
+
+    <!-- LEFT: Generated Narrative -->
+    <div class="card" style="grid-column: 1 / -1;">
+        <h2>
+            Generated Narrative: {{ control_id }}
+            {% if narrative_id %}
+            <span class="badge badge-draft" style="font-size: 0.7rem; vertical-align: middle;">DRAFT</span>
+            {% endif %}
+        </h2>
+
+        {% if result and result.get('markdown') %}
+
+        <!-- Metadata bar -->
+        <div style="display: flex; gap: 2rem; margin-bottom: 1rem; font-size: 0.85rem; color: var(--text-muted); align-items: center; flex-wrap: wrap;">
+            <span><strong>Account:</strong> {{ account_id }}</span>
+            <span><strong>Model:</strong> {{ result.get('model', 'N/A') }}</span>
+            {% if result.get('implementation_status') %}
+            <span><strong>Status:</strong>
+                {% set impl_status = result.get('implementation_status', 'Unknown') %}
+                {% if 'implemented' in impl_status.lower() and 'partially' not in impl_status.lower() %}
+                <span class="badge badge-success">{{ impl_status }}</span>
+                {% elif 'partially' in impl_status.lower() %}
+                <span class="badge badge-warning">{{ impl_status }}</span>
+                {% else %}
+                <span class="badge badge-info">{{ impl_status }}</span>
+                {% endif %}
+            </span>
+            {% endif %}
+            {% if result.get('is_valid') %}
+            <span class="badge badge-success">Valid Structure</span>
+            {% elif result.get('missing_headings') %}
+            <span class="badge badge-warning">Missing: {{ result.get('missing_headings') | join(', ') }}</span>
+            {% endif %}
+
+            <span style="margin-left: auto; display:flex; gap:0.5rem; align-items:center;">
+                <button id="copyMdBtn" class="btn btn-secondary" type="button" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">
+                    Copy Markdown
+                </button>
+                <span id="copyMdStatus" style="font-size: 0.85rem; color: var(--text-muted);"></span>
+            </span>
+        </div>
+
+        {% if narrative_id %}
+        <div class="alert alert-success" style="font-size: 0.85rem;">
+            Narrative saved. ID: <code>{{ narrative_id }}</code>
+            &mdash; Retrievable via <code>GET /ai/narratives/{{ narrative_id }}</code>
+        </div>
+        {% endif %}
+
+        <!-- Rendered narrative (Markdown -> HTML on server) -->
+        <div class="narrative-output">
+            {{ result.get('html', '') | safe }}
+        </div>
+
+        {% else %}
+        <div class="alert alert-info">
+            No narrative was generated. Check the error above or try again.
+        </div>
+        {% endif %}
+    </div>
+
+</div>
+
+{% if result and result.get('evidence_snapshot') %}
+<div class="card">
+    <h2>Agent Trace</h2>
+    <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem;">
+        High-level planning + tools used (no chain-of-thought). This helps validate the narrative is evidence-driven.
+    </p>
+
+    {% set snap = result.get('evidence_snapshot') %}
+
+    {% if snap.get('analysis') %}
+    <div style="margin-bottom: 1rem;">
+        <strong>Assessor Summary</strong>
+        {% if snap.get('analysis', {}).get('assessor_summary') %}
+        <ul style="margin-top: 0.5rem;">
+            {% for item in snap.get('analysis', {}).get('assessor_summary') %}
+            <li>{{ item }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if snap.get('tool_calls') %}
+    <div style="margin-bottom: 1rem;">
+        <strong>Planned / Executed Tool Calls</strong>
+        <table style="margin-top: 0.5rem;">
+            <thead>
+                <tr>
+                    <th>Tool</th>
+                    <th>Args</th>
+                    <th>Result</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for call in snap.get('tool_calls', []) %}
+                {% set out = (snap.get('tool_outputs', []) | selectattr('name', 'equalto', call.name) | list) %}
+                {% set out0 = out[0] if out and out|length > 0 else None %}
+                <tr>
+                    <td><code>{{ call.name }}</code></td>
+                    <td><pre class="evidence-block" style="margin:0;">{{ call.args | tojson(indent=2) }}</pre></td>
+                    <td>
+                        {% if out0 and out0.get('error') %}
+                        <span class="badge badge-danger">error</span>
+                        <div style="margin-top:0.25rem; color: var(--color-danger); font-size: 0.85rem;">
+                            {{ out0.get('error') }}
+                        </div>
+                        {% elif out0 %}
+                        <span class="badge badge-success">ok</span>
+                        {% else %}
+                        <span class="badge badge-info">n/a</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>Evidence Snapshot (Audit Trail)</h2>
+    <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem;">
+        The exact evidence data the AI model used to generate this narrative.
+        Stored with every generated narrative for traceability (AU-3).
+    </p>
+    <pre class="evidence-block">{{ result.get('evidence_snapshot') | tojson(indent=2) }}</pre>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  const btn = document.getElementById('copyMdBtn');
+  const status = document.getElementById('copyMdStatus');
+  if (!btn) return;
+
+  // Raw markdown (not rendered HTML)
+  const md = {{ (result.get('markdown', '') or '') | tojson }};
+
+  function setStatus(text) {
+    if (!status) return;
+    status.textContent = text || '';
+    if (text) setTimeout(() => { status.textContent = ''; }, 2000);
+  }
+
+  async function copyText(text) {
+    // Prefer async clipboard API
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    // Fallback for older browsers
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', 'true');
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    ta.style.top = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
+
+  btn.addEventListener('click', async () => {
+    try {
+      btn.disabled = true;
+      await copyText(String(md || ''));
+      setStatus('Copied.');
+    } catch (e) {
+      setStatus('Copy failed.');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+
+{% block title %}Template Manager — FedRAMP AI Studio{% endblock %}
+
+{% block extra_head %}
+<style>
+  .dropzone {
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+    background: #fff;
+    text-align: center;
+    color: var(--text-muted);
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .dropzone.dragover {
+    border-color: var(--accent);
+    background: #ebf8ff;
+    color: var(--text);
+  }
+  .small-muted { color: var(--text-muted); font-size: 0.85rem; }
+  pre.json {
+    background: #0b1020;
+    color: #e6edf3;
+    padding: 1rem;
+    border-radius: 8px;
+    overflow: auto;
+    max-width: 100%;
+    box-sizing: border-box;
+    white-space: pre-wrap;      /* wrap long JSON strings */
+    overflow-wrap: anywhere;    /* prevent off-screen overflow */
+    word-break: break-word;
+    max-height: 520px;
+    font-size: 0.85rem;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h2>Template Manager</h2>
+  <p class="small-muted">
+    Upload a FedRAMP narrative template (.docx) to parse it into Markdown (including tables) and store the
+    per-control template Markdown directly on each control in Postgres.
+  </p>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <h2>Ingest Template</h2>
+
+    <label for="tagInput">Template Tag (optional)</label>
+    <input id="tagInput" type="text" placeholder="e.g. Rev 5" />
+
+    <div id="dropzone" class="dropzone">
+      <div><strong>Drag & drop</strong> a <code>.docx</code> or <code>.md</code> here</div>
+      <div class="small-muted" style="margin-top: 0.5rem;">or choose a file</div>
+      <div style="margin-top: 0.75rem;">
+        <input id="fileInput" type="file" accept=".docx,.md,.markdown" />
+      </div>
+    </div>
+
+    <div style="margin-top: 1rem;">
+      <button id="ingestBtn" class="btn btn-primary">Ingest</button>
+      <span id="ingestSpinner" class="spinner" style="display:none;"></span>
+    </div>
+
+    <div id="ingestMsg" class="small-muted" style="margin-top: 0.75rem;"></div>
+
+    <div id="ingestResult" style="margin-top: 1rem; display:none;">
+      <h3>Latest Ingest</h3>
+      <div class="small-muted" id="ingestMeta"></div>
+
+      <label for="controlSelect" style="margin-top: 0.75rem;">Control</label>
+      <select id="controlSelect"></select>
+
+      <div style="display:flex; gap: 0.75rem; flex-wrap: wrap;">
+        <button id="previewBtn" class="btn btn-secondary">Preview Template Markdown</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Template Preview</h2>
+    <div class="small-muted">Markdown shown exactly as stored in the database.</div>
+    <pre id="preview" class="json" style="margin-top: 1rem;"></pre>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const tagInput = document.getElementById('tagInput');
+  const ingestBtn = document.getElementById('ingestBtn');
+  const ingestSpinner = document.getElementById('ingestSpinner');
+  const ingestMsg = document.getElementById('ingestMsg');
+  const ingestResult = document.getElementById('ingestResult');
+  const ingestMeta = document.getElementById('ingestMeta');
+  const controlSelect = document.getElementById('controlSelect');
+  const previewBtn = document.getElementById('previewBtn');
+  const preview = document.getElementById('preview');
+  let lastControlIds = [];
+
+  function setMsg(text) {
+    ingestMsg.textContent = text || '';
+  }
+
+  function setPreviewText(text) {
+    preview.textContent = String(text || '');
+  }
+
+  function escapeHtml(s) {
+    return String(s || '').replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
+
+  function pickDroppedFile(ev) {
+    const files = ev.dataTransfer && ev.dataTransfer.files;
+    if (!files || files.length === 0) return null;
+    return files[0];
+  }
+
+  dropzone.addEventListener('dragover', (ev) => {
+    ev.preventDefault();
+    dropzone.classList.add('dragover');
+  });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+  dropzone.addEventListener('drop', (ev) => {
+    ev.preventDefault();
+    dropzone.classList.remove('dragover');
+    const f = pickDroppedFile(ev);
+    if (f) fileInput.files = ev.dataTransfer.files;
+  });
+
+  ingestBtn.addEventListener('click', async () => {
+    setMsg('');
+    ingestResult.style.display = 'none';
+    setPreviewText('');
+
+    const tag = (tagInput.value || '').trim();
+    const f = fileInput.files && fileInput.files[0];
+    if (!f) { setMsg('Please choose a .docx or .md file.'); return; }
+    const lower = String(f.name || '').toLowerCase();
+    if (!(lower.endsWith('.docx') || lower.endsWith('.md') || lower.endsWith('.markdown'))) {
+      setMsg('Only .docx and .md files are supported.');
+      return;
+    }
+
+    ingestBtn.disabled = true;
+    ingestSpinner.style.display = '';
+    try {
+      const form = new FormData();
+      if (tag) form.append('tag', tag);
+      form.append('file', f, f.name);
+      const res = await fetch('/templates/ingest', { method: 'POST', body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMsg((data && data.detail) ? String(data.detail) : 'Ingest failed.');
+        return;
+      }
+
+      lastControlIds = Array.isArray(data.control_ids) ? data.control_ids : [];
+      ingestMeta.textContent = `controls_updated=${data.controls_updated}  parser=${data.parser_version}  file=${data.source_filename}`;
+
+      controlSelect.innerHTML = '';
+      for (const cid of lastControlIds) {
+        const opt = document.createElement('option');
+        opt.value = cid;
+        opt.textContent = cid;
+        controlSelect.appendChild(opt);
+      }
+
+      ingestResult.style.display = '';
+      setMsg('Ingest completed.');
+    } catch (e) {
+      setMsg('Ingest failed (network or server error).');
+    } finally {
+      ingestBtn.disabled = false;
+      ingestSpinner.style.display = 'none';
+    }
+  });
+
+  previewBtn.addEventListener('click', async () => {
+    const cid = controlSelect.value;
+    if (!cid) { setMsg('Select a control.'); return; }
+    setMsg('');
+    try {
+      const res = await fetch(`/templates/controls/${encodeURIComponent(cid)}`);
+      const data = await res.json();
+      if (!res.ok) { setMsg((data && data.detail) ? String(data.detail) : 'Template not found.'); return; }
+      setPreviewText(data.template_markdown || '');
+    } catch (e) {
+      setMsg('Failed to fetch template.');
+    }
+  });
+</script>
+{% endblock %}
+

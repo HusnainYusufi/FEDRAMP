@@ -1,0 +1,508 @@
+{% extends "base.html" %}
+
+{% block title %}FedRAMP AI Studio — Dashboard{% endblock %}
+
+{% block content %}
+{% if db_error %}
+<div class="alert alert-error">
+    <strong>Database not connected.</strong> {{ db_error }}
+</div>
+{% endif %}
+<div class="grid-2">
+
+    <!-- LEFT PANEL: Narrative Generator (Use Case 1) -->
+    <div class="card">
+        <h2>Narrative Generator</h2>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">
+            Generate FedRAMP SSP narratives or build diagram prompts from ingested AWS evidence.
+        </p>
+
+        <form action="#" method="post" id="generateForm">
+            <label>Mode</label>
+            <div style="display:flex; gap: 0.75rem; align-items:center; margin-bottom: 1rem;">
+                <label style="display:flex; align-items:center; gap:0.5rem; font-weight:600; color:var(--text); text-transform:none; letter-spacing:0; margin-bottom:0;">
+                    <input type="radio" name="generator_mode" value="narrative" id="modeNarrative" checked>
+                    Narrative (Use Case 1)
+                </label>
+                <label style="display:flex; align-items:center; gap:0.5rem; font-weight:600; color:var(--text); text-transform:none; letter-spacing:0; margin-bottom:0;">
+                    <input type="radio" name="generator_mode" value="diagram" id="modeDiagram">
+                    Mermaid Diagram (Use Case 11)
+                </label>
+            </div>
+
+            <div id="narrativeFields">
+            <label for="control_id">Control</label>
+            <select name="control_id" id="control_id">
+                {% if controls %}
+                    {% for c in controls %}
+                    <option value="{{ c.control_id }}">{{ c.control_id }} — {{ c.title }}</option>
+                    {% endfor %}
+                {% else %}
+                    <option value="" selected disabled>Loading controls…</option>
+                {% endif %}
+            </select>
+
+            <div style="margin-top: -0.25rem; margin-bottom: 1rem;">
+                <a href="/ui/templates" class="btn btn-secondary" style="font-size: 0.85rem;">
+                    Upload / Ingest Template
+                </a>
+                </div>
+            </div>
+
+            <label for="account_id">AWS Account (ingested)</label>
+            <select name="account_id" id="account_id" required>
+                {% if accounts %}
+                    {% for a in accounts %}
+                    <option
+                        value="{{ a.account_id }}"
+                        data-latest-run-id="{{ a.latest_run_id }}"
+                        data-latest-status="{{ a.latest_status }}"
+                        data-identities="{{ a.identities_count }}"
+                        data-assets="{{ a.assets_count }}"
+                        data-networks="{{ a.networks_count }}"
+                        data-data-stores="{{ a.data_stores_count }}"
+                    >
+                        {{ a.account_id }} (latest: {{ a.latest_status }})
+                    </option>
+                    {% endfor %}
+                {% else %}
+                    <option value="" disabled selected>No ingested accounts yet (run ingestion first)</option>
+                {% endif %}
+            </select>
+
+            <div class="alert alert-info" id="accountSummary" style="display:none; margin-top: -0.25rem;">
+                <strong>Latest ingested evidence:</strong>
+                <span id="accountSummaryText"></span>
+            </div>
+
+            <label for="ingestion_run_id">Ingestion Run (optional)</label>
+            <select name="ingestion_run_id" id="ingestion_run_id">
+                <option value="">Latest successful run</option>
+                {% for r in runs %}
+                <option value="{{ r.id }}" data-account-id="{{ r.account_id }}">
+                    {{ r.started_at.strftime('%Y-%m-%d %H:%M') if r.started_at else 'N/A' }}
+                    — {{ r.account_id }}
+                    ({{ r.status.value if r.status else 'unknown' }})
+                </option>
+                {% endfor %}
+            </select>
+
+            <div id="diagramFields" style="display:none;">
+                <label style="margin-top: 0.25rem;">Diagram Options</label>
+                <label for="mermaid_max_attempts" style="text-transform:none; letter-spacing:0;">
+                    Evaluator feedback loop (attempts)
+                </label>
+                <select id="mermaid_max_attempts" name="mermaid_max_attempts">
+                    <option value="1">1 (fast)</option>
+                    <option value="2" selected>2 (recommended)</option>
+                    <option value="3">3 (strict)</option>
+                </select>
+                <div class="alert alert-info" style="margin-top: 0.75rem;">
+                    Generates a FedRAMP-auditor-style Mermaid ABD/DFD using your ingested AWS evidence and a style guide based on <code>@docs/example_diagram.png</code>.
+                    Missing required elements are shown as <strong>NOT EVIDENCED / PLANNED</strong>.
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary" id="generateBtn">
+                Generate Narrative
+                <span class="spinner" id="spinner"></span>
+            </button>
+        </form>
+
+        <!-- Mermaid diagrams are rendered on /ui/diagrams/{id} after generation -->
+    </div>
+
+    <!-- RIGHT PANEL: AWS Ingestion + Evidence (Use Case 2) -->
+    <div class="card">
+        <h2>AWS Ingestion & Evidence</h2>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">
+            Trigger an ingestion run (read-only) and view the ingested evidence.
+        </p>
+
+        <h3>Ingest AWS Account</h3>
+        <form action="#" method="post" id="ingestForm">
+            <label for="ingest_account_id">AWS Account ID</label>
+            <input type="text" name="account_id" id="ingest_account_id"
+                   placeholder="123456789012" pattern="\d{12}" maxlength="12"
+                   {% if runs %}value="{{ runs[0].account_id }}"{% endif %}
+                   required>
+
+            <label for="role_arn">Role ARN (SecurityAudit)</label>
+            <input type="text" name="role_arn" id="role_arn"
+                   placeholder="arn:aws:iam::123456789012:role/SecurityAudit"
+                   required>
+
+            <label for="regions">Regions (comma-separated)</label>
+            <input type="text" name="regions" id="regions"
+                   placeholder="us-east-1, eu-north-1"
+                   value="{% if runs and runs[0].regions %}{{ runs[0].regions | join(', ') }}{% endif %}"
+                   required>
+
+            <button type="submit" class="btn btn-primary" id="ingestBtn">
+                Ingest AWS
+                <span class="spinner" id="ingestSpinner"></span>
+            </button>
+        </form>
+
+        <div class="alert alert-info" style="margin-top: 1rem;">
+            This form sets the <em>target</em> account/role/regions to ingest.
+            The AWS credentials used to call STS AssumeRole still come from your runtime environment.
+            <br><br>
+            <strong>Important:</strong> The Role ARN must be a <em>role</em> (contains <code>:role/</code>),
+            not a user (contains <code>:user/</code>).
+        </div>
+
+        {% if runs %}
+        <h3>Recent Ingestion Runs</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Account</th>
+                    <th>Status</th>
+                    <th>Resources</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in runs %}
+                <tr>
+                    <td>{{ r.started_at.strftime('%Y-%m-%d %H:%M') if r.started_at else 'N/A' }}</td>
+                    <td><code>{{ r.account_id }}</code></td>
+                    <td>
+                        {% if r.status.value == 'success' %}
+                        <span class="badge badge-success">Success</span>
+                        {% elif r.status.value == 'running' %}
+                        <span class="badge badge-info">Running</span>
+                        {% else %}
+                        <span class="badge badge-danger">Failed</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {{ r.identities_count }} identities,
+                        {{ r.assets_count }} assets,
+                        {{ r.networks_count }} networks,
+                        {{ r.data_stores_count }} data stores
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="alert alert-info">
+            No ingestion runs found. Trigger one via <code>POST /aws/ingestions</code> first.
+        </div>
+        {% endif %}
+
+        <div style="margin-top: 1rem;">
+            <a href="/aws/evidence/runs" target="_blank" class="btn btn-secondary" style="font-size: 0.85rem;">
+                View Full Evidence API &rarr;
+            </a>
+        </div>
+    </div>
+
+</div>
+
+<!-- Recent Narratives -->
+<div class="card">
+    <h2>Recent Narratives</h2>
+    {% if narratives %}
+    <table>
+        <thead>
+            <tr>
+                <th>Control</th>
+                <th>Account</th>
+                <th>Status</th>
+                <th>Model</th>
+                <th>Generated</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for n in narratives %}
+            <tr>
+                <td><strong>{{ n.control_id }}</strong></td>
+                <td><code>{{ n.account_id }}</code></td>
+                <td><span class="badge badge-draft">{{ n.status.value if n.status else 'draft' }}</span></td>
+                <td>{{ n.model }}</td>
+                <td>{{ n.created_at.strftime('%Y-%m-%d %H:%M') if n.created_at else 'N/A' }}</td>
+                <td><a href="/ui/narratives/{{ n.id }}" class="btn btn-secondary" style="font-size: 0.8rem; padding: 0.3rem 0.8rem;">View</a></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="alert alert-info">
+        No narratives generated yet. Use the form above to create your first one.
+    </div>
+    {% endif %}
+</div>
+
+<!-- Recent Diagrams (Use Case 11) -->
+<div class="card">
+    <h2>Recent Diagrams</h2>
+    {% if diagrams %}
+    <table>
+        <thead>
+            <tr>
+                <th>Account</th>
+                <th>Run</th>
+                <th>Models</th>
+                <th>Generated</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for d in diagrams %}
+            <tr>
+                <td><code>{{ d.account_id }}</code></td>
+                <td>
+                    {% if d.ingestion_run_id %}
+                    <code>{{ d.ingestion_run_id }}</code>
+                    {% else %}
+                    <span style="color: var(--text-muted);">—</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {{ d.model_text }}
+                    {% if d.model_mermaid %} / {{ d.model_mermaid }}{% endif %}
+                    / {{ d.model_image }}
+                </td>
+                <td>{{ d.created_at.strftime('%Y-%m-%d %H:%M') if d.created_at else 'N/A' }}</td>
+                <td>
+                    <a href="/ui/diagrams/{{ d.id }}" class="btn btn-secondary" style="font-size: 0.8rem; padding: 0.3rem 0.8rem;">View</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="alert alert-info">
+        No diagrams generated yet. Use Diagram mode above to generate your first one.
+    </div>
+    {% endif %}
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('generateForm').addEventListener('submit', async function(ev) {
+    ev.preventDefault();
+    const btn = document.getElementById('generateBtn');
+    if (!btn) return;
+
+    // Don't rely on a global #spinner always existing in the DOM.
+    // If a previous JS error occurred after btn.textContent cleared children, the spinner may be missing.
+    let spinner = btn.querySelector('#spinner') || btn.querySelector('.spinner');
+    if (!spinner) {
+        spinner = document.createElement('span');
+        spinner.className = 'spinner';
+        spinner.id = 'spinner';
+        btn.appendChild(spinner);
+    }
+    btn.disabled = true;
+    btn.textContent = 'Generating... ';
+    spinner.style.display = 'inline-block';
+    btn.appendChild(spinner);
+
+    const mode = document.querySelector('input[name="generator_mode"]:checked')?.value || 'narrative';
+    const controlId = document.getElementById('control_id')?.value;
+    const accountId = document.getElementById('account_id')?.value;
+    const runId = document.getElementById('ingestion_run_id')?.value || null;
+    const mermaidMaxAttempts = parseInt(document.getElementById('mermaid_max_attempts')?.value || '2', 10);
+
+    try {
+        if (mode === 'diagram') {
+            const res = await fetch('/ai/architecture-diagrams/generate-mermaid', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    account_id: accountId,
+                    ingestion_run_id: runId && String(runId).trim() ? runId : null,
+                    persist: true,
+                    max_attempts: isFinite(mermaidMaxAttempts) ? mermaidMaxAttempts : 2
+                })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                alert((data && data.detail) ? String(data.detail) : 'Mermaid diagram generation failed.');
+                return;
+            }
+            if (data && data.id) {
+                window.location.href = `/ui/diagrams/${encodeURIComponent(String(data.id))}`;
+                return;
+            }
+            alert('Mermaid diagram generated but was not persisted (no id returned).');
+            return;
+        }
+
+        // Narrative mode (default)
+        const res = await fetch('/ai/narratives/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                control_id: controlId,
+                account_id: accountId,
+                ingestion_run_id: runId && String(runId).trim() ? runId : null,
+                persist: true
+            })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            alert((data && data.detail) ? String(data.detail) : 'Narrative generation failed.');
+            return;
+        }
+        if (data && data.id) {
+            window.location.href = `/ui/narratives/${encodeURIComponent(data.id)}`;
+            return;
+        }
+        alert('Narrative generated but was not persisted (no id returned).');
+    } catch (e) {
+        alert('Generation failed (network/server error).');
+    } finally {
+        btn.disabled = false;
+        const mode = document.querySelector('input[name="generator_mode"]:checked')?.value || 'narrative';
+        btn.textContent = (mode === 'diagram') ? 'Generate Mermaid Diagram' : 'Generate Narrative';
+        if (spinner) {
+        spinner.style.display = 'none';
+        btn.appendChild(spinner);
+        }
+    }
+});
+
+async function loadControls(query) {
+    const select = document.getElementById('control_id');
+    if (!select) return;
+    const q = (query || '').trim();
+    const url = q
+        ? `/templates/controls?q=${encodeURIComponent(q)}&limit=2000`
+        : `/templates/controls?limit=20000`;
+
+    try {
+        const res = await fetch(url);
+        const items = await res.json().catch(() => ([]));
+        if (!res.ok || !Array.isArray(items)) throw new Error('bad response');
+        if (items.length === 0) {
+            select.innerHTML = '<option value="" selected disabled>No controls available. Ingest a template first.</option>';
+            return;
+        }
+
+        const prev = select.value;
+        select.innerHTML = '';
+        for (const c of items) {
+            const opt = document.createElement('option');
+            opt.value = c.control_id;
+            opt.textContent = `${c.control_id} — ${c.title || ''}`;
+            select.appendChild(opt);
+        }
+        if (prev) select.value = prev;
+        if (!select.value && select.options.length > 0) select.selectedIndex = 0;
+    } catch (e) {
+        // Fallback: show at least one option so the form isn't blocked.
+        select.innerHTML = '<option value="AC-2">AC-2 — Account Management</option>';
+    }
+}
+
+// Initial async load (keeps initial page render fast).
+loadControls('');
+
+function updateModeUI() {
+    const mode = document.querySelector('input[name="generator_mode"]:checked')?.value || 'narrative';
+    const narrativeFields = document.getElementById('narrativeFields');
+    const diagramFields = document.getElementById('diagramFields');
+    const btn = document.getElementById('generateBtn');
+    if (narrativeFields) narrativeFields.style.display = (mode === 'diagram') ? 'none' : 'block';
+    if (diagramFields) diagramFields.style.display = (mode === 'diagram') ? 'block' : 'none';
+
+    if (btn) btn.textContent = (mode === 'diagram') ? 'Generate Mermaid Diagram' : 'Generate Narrative';
+}
+document.getElementById('modeNarrative')?.addEventListener('change', updateModeUI);
+document.getElementById('modeDiagram')?.addEventListener('change', updateModeUI);
+updateModeUI();
+
+// Mermaid generation redirects to /ui/diagrams/{id}; no inline prompt copy blocks on the dashboard.
+
+function updateAccountSummaryAndRuns() {
+    const accountSelect = document.getElementById('account_id');
+    const summaryBox = document.getElementById('accountSummary');
+    const summaryText = document.getElementById('accountSummaryText');
+    const runSelect = document.getElementById('ingestion_run_id');
+
+    if (!accountSelect || !accountSelect.value) {
+        if (summaryBox) summaryBox.style.display = 'none';
+        return;
+    }
+
+    const selected = accountSelect.options[accountSelect.selectedIndex];
+    const latestRunId = selected.getAttribute('data-latest-run-id');
+    const latestStatus = selected.getAttribute('data-latest-status');
+    const identities = selected.getAttribute('data-identities');
+    const assets = selected.getAttribute('data-assets');
+    const networks = selected.getAttribute('data-networks');
+    const dataStores = selected.getAttribute('data-data-stores');
+
+    if (summaryBox && summaryText) {
+        summaryText.innerHTML = `run <code>${latestRunId}</code> (${latestStatus}) — `
+            + `${identities} identities, ${assets} assets, ${networks} networks, ${dataStores} data stores.`;
+        summaryBox.style.display = 'block';
+    }
+
+    // Filter run dropdown to selected account (keep the \"Latest successful\" option)
+    if (runSelect) {
+        const accountId = accountSelect.value;
+        for (let i = 0; i < runSelect.options.length; i++) {
+            const opt = runSelect.options[i];
+            const optAccount = opt.getAttribute('data-account-id');
+            if (!optAccount) continue; // first option
+            opt.style.display = (optAccount === accountId) ? '' : 'none';
+        }
+        // Reset to default to avoid selecting hidden option
+        runSelect.value = '';
+    }
+}
+
+document.getElementById('account_id')?.addEventListener('change', updateAccountSummaryAndRuns);
+updateAccountSummaryAndRuns();
+
+document.getElementById('ingestForm').addEventListener('submit', async function(ev) {
+    ev.preventDefault();
+    const btn = document.getElementById('ingestBtn');
+    const spinner = document.getElementById('ingestSpinner');
+    btn.disabled = true;
+    btn.textContent = 'Ingesting... ';
+    spinner.style.display = 'inline-block';
+    btn.appendChild(spinner);
+
+    const accountId = document.getElementById('ingest_account_id')?.value;
+    const roleArn = document.getElementById('role_arn')?.value;
+    const regionsRaw = document.getElementById('regions')?.value || '';
+    const regions = regionsRaw.split(',').map(r => r.trim()).filter(Boolean);
+
+    try {
+        const res = await fetch('/aws/ingestions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ account_id: accountId, role_arn: roleArn, regions })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            alert((data && data.detail) ? String(data.detail) : 'Ingestion failed.');
+            return;
+        }
+        if (data.status !== 'success') {
+            alert(data.error || 'Ingestion failed.');
+            return;
+        }
+        // Reload to show the new run and account in dropdowns.
+        window.location.reload();
+    } catch (e) {
+        alert('Ingestion failed (network/server error).');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Ingest AWS';
+        spinner.style.display = 'none';
+        btn.appendChild(spinner);
+    }
+});
+</script>
+{% endblock %}

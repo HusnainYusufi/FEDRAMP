@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}FedRAMP AI Studio — Ingestion Result{% endblock %}
+
+{% block content %}
+
+<div style="margin-bottom: 1rem;">
+  <a href="/ui/" class="btn btn-secondary" style="font-size: 0.85rem;">&larr; Back to Dashboard</a>
+</div>
+
+{% if status == "success" %}
+  <div class="alert alert-success">
+    <strong>Ingestion completed successfully.</strong>
+    {% if run_id %} Run ID: <code>{{ run_id }}</code>{% endif %}
+  </div>
+{% else %}
+  <div class="alert alert-error">
+    <strong>Ingestion failed.</strong>
+    {% if run_id %} Run ID: <code>{{ run_id }}</code>{% endif %}
+    {% if error %}<div style="margin-top:0.5rem;"><code>{{ error }}</code></div>{% endif %}
+  </div>
+{% endif %}
+
+<div class="card">
+  <h2>AWS Ingestion Result</h2>
+
+  {% if result %}
+  <table>
+    <thead>
+      <tr>
+        <th>Metric</th>
+        <th>Value</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Status</td><td><span class="badge badge-success">success</span></td></tr>
+      <tr><td>Assets ingested</td><td>{{ result.assets_ingested if result.assets_ingested is defined else result["assets_ingested"] }}</td></tr>
+      <tr><td>Identities ingested</td><td>{{ result.identities_ingested if result.identities_ingested is defined else result["identities_ingested"] }}</td></tr>
+      <tr><td>Networks ingested</td><td>{{ result.networks_ingested if result.networks_ingested is defined else result["networks_ingested"] }}</td></tr>
+      <tr><td>Data stores ingested</td><td>{{ result.data_stores_ingested if result.data_stores_ingested is defined else result["data_stores_ingested"] }}</td></tr>
+    </tbody>
+  </table>
+  {% else %}
+  <div class="alert alert-info">
+    No result payload returned.
+  </div>
+  {% endif %}
+
+  <div style="margin-top: 1rem;">
+    <a href="/aws/evidence/runs" class="btn btn-secondary" style="font-size: 0.85rem;" target="_blank">View Evidence API &rarr;</a>
+  </div>
+</div>
+
+{% endblock %}
+

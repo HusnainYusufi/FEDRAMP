@@ -1,0 +1,9 @@
+Ingest AWS Account
+AWS Account ID
+154776478584
+Role ARN (SecurityAudit)
+arn:aws:iam::154776478584:user/AbdulHadi
+Regions (comma-separated)
+us-east-1
+AWS_ACCESS_KEY_ID=AKIASICLFUN4N52MO3HS
+AWS_SECRET_ACCESS_KEY=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

@@ -1,0 +1,77 @@
+# --------------------------------------------------------------------------
+# FedRAMP Ingestion Core — Local Development Stack
+#
+# Services:
+#   db   — PostgreSQL 16 with JSONB support
+#   app  — FastAPI ingestion engine
+#
+# Usage:
+#   docker-compose up --build
+#
+# The app service waits for PostgreSQL to be ready, then runs
+# Alembic migrations before starting the API server.
+# --------------------------------------------------------------------------
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: fedramp
+      POSTGRES_PASSWORD: fedramp
+      POSTGRES_DB: fedramp
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fedramp -d fedramp"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      # Database — psycopg3 works for async app and sync tooling
+      DATABASE_URL: "postgresql+psycopg://fedramp:fedramp@db:5432/fedramp"
+      DATABASE_URL_SYNC: "postgresql+psycopg://fedramp:fedramp@db:5432/fedramp"
+      # Application
+      DEBUG: "true"
+      LOG_LEVEL: "INFO"
+      LOG_FORMAT: "json"
+      # OpenAI (Assessment AI / narrative generation)
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_MODEL: "${OPENAI_MODEL:-gpt-5.2}"
+      OPENAI_TIMEOUT_SECONDS: "${OPENAI_TIMEOUT_SECONDS:-120}"
+      OPENAI_MAX_TOKENS: "${OPENAI_MAX_TOKENS:-4096}"
+      # Assessment AI tooling
+      ASSESSMENT_AI_MAX_TOOL_CALLS: "${ASSESSMENT_AI_MAX_TOOL_CALLS:-20}"
+      ASSESSMENT_AI_DEFAULT_SAMPLE_LIMIT: "${ASSESSMENT_AI_DEFAULT_SAMPLE_LIMIT:-10}"
+      ASSESSMENT_AI_ENABLED_TOOLS: "${ASSESSMENT_AI_ENABLED_TOOLS:-}"
+      # AWS credentials are passed through from the host environment.
+      # In production these come from instance profiles or ECS task roles.
+      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-us-east-1}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      AWS_DEFAULT_EXTERNAL_ID: "${AWS_DEFAULT_EXTERNAL_ID:-}"
+      AWS_SESSION_DURATION: "${AWS_SESSION_DURATION:-3600}"
+    depends_on:
+      db:
+        condition: service_healthy
+    # Run migrations then start the server.
+    # The migration command runs as root (needs write access to alembic),
+    # then uvicorn drops to the fedramp user via the Dockerfile USER directive.
+    command: >
+      sh -c "
+        alembic upgrade head &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000
+      "
+    user: root
+
+volumes:
+  pgdata:

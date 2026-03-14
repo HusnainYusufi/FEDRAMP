@@ -1,0 +1,885 @@
+{% extends "base.html" %}
+
+{% block title %}FedRAMP AI Studio — AI Agent Playground{% endblock %}
+
+{% block extra_head %}
+<style>
+  .pg-layout {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 1.5rem;
+    align-items: start;
+  }
+  @media (max-width: 960px) {
+    .pg-layout { grid-template-columns: 1fr; }
+  }
+  .pg-sidebar {
+    position: sticky;
+    top: 1rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .pg-sidebar h3 {
+    margin-bottom: 0.5rem;
+    font-size: 0.95rem;
+  }
+  .pg-nav {
+    list-style: none;
+    padding: 0;
+    margin: 0.75rem 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .pg-nav a {
+    display: block;
+    padding: 0.5rem 0.6rem;
+    border-radius: 6px;
+    text-decoration: none;
+    color: var(--text);
+    border: 1px solid transparent;
+    font-size: 0.9rem;
+  }
+  .pg-nav a:hover {
+    border-color: var(--border);
+    background: var(--bg);
+  }
+  .pg-nav a.pg-active {
+    border-color: var(--accent);
+    background: rgba(49, 130, 206, 0.08);
+  }
+  .pg-section {
+    scroll-margin-top: 1rem;
+  }
+  .pg-muted {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+  }
+  .pg-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+  }
+  @media (max-width: 980px) {
+    .pg-row { grid-template-columns: 1fr; }
+  }
+  /* File inputs weren’t styled by base.css */
+  input[type="file"]{
+    width: 100%;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.95rem;
+    margin-bottom: 1rem;
+    background: #fff;
+  }
+  .pg-actions {
+    display:flex;
+    gap:0.5rem;
+    align-items:center;
+    flex-wrap: wrap;
+    margin-top: 0.25rem;
+    margin-bottom: 0.75rem;
+  }
+  .pg-output {
+    display: none;
+  }
+  /* Fix the "black box": use a lighter code panel for playground outputs */
+  .pg-output.evidence-block {
+    background: #fafbfc;
+    color: var(--text);
+    border: 1px solid var(--border);
+    max-height: 320px;
+    white-space: pre-wrap;     /* wrap long JSON lines */
+    overflow-wrap: anywhere;   /* prevent horizontal overflow */
+    word-break: break-word;
+  }
+  .pg-output.evidence-block:empty {
+    display: none;
+  }
+  .pg-only-active {
+    display: none;
+  }
+  .pg-only-active.pg-active {
+    display: block;
+  }
+  /* Ensure any tables we render in Playground (e.g., vendor HTML table) never overflow the card */
+  .pg-table-wrap {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  .pg-section th, .pg-section td {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .pg-small {
+    font-size: 0.85rem;
+  }
+  /* GPT answer panel wrapping */
+  #ragAnswerOut {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="card">
+  <h2>AI Agent Playground</h2>
+  <p class="pg-muted">
+    This page is a browser-based test harness for the new AI-agent capabilities. Each section includes
+    <strong>what it does</strong>, <strong>which requirement it satisfies</strong>, and a form that calls the matching <code>/ai/...</code> API.
+  </p>
+  <div class="alert alert-info pg-small" style="margin-top: 0.9rem;">
+    <strong>Tip:</strong> Outputs stay hidden until you run an action (no more empty black boxes).
+    Buttons show a loading state while requests are in-flight.
+  </div>
+</div>
+
+<div class="pg-layout">
+  <aside class="pg-sidebar">
+    <h3>Categories</h3>
+    <div class="pg-muted pg-small">Jump to a use case:</div>
+    <ul class="pg-nav">
+      <li><a class="pg-tab" data-target="rag" href="#rag">1) Documentation Evidence (RAG)</a></li>
+      <li><a class="pg-tab" data-target="sensitive" href="#sensitive">2) Sensitive Data Locations</a></li>
+      <li><a class="pg-tab" data-target="vendors" href="#vendors">3) Vendors → Categories</a></li>
+      <li><a class="pg-tab" data-target="scans" href="#scans">4) Scan Results → Controls</a></li>
+      <li><a class="pg-tab" data-target="policies" href="#policies">5) Generate Missing Policies</a></li>
+      <li><a class="pg-tab" data-target="poam" href="#poam">6) Exceptions / POA&amp;M Validation</a></li>
+    </ul>
+    <div class="alert alert-info pg-small" style="margin-top: 1rem;">
+      <strong>Audit framing:</strong> everything here is designed to be evidence-driven (AWS ingestion + uploaded documents),
+      not “LLM guessing”.
+    </div>
+  </aside>
+
+  <main>
+
+    <!-- 1) RAG -->
+    <section id="rag" class="pg-section pg-only-active">
+      <div class="card">
+        <h2>1) Documentation Evidence (RAG)</h2>
+        <p class="pg-muted">
+          <strong>Requirement #1:</strong> “Where does the policy say we enforce MFA?” Upload policy/SSP PDFs and retrieve
+          exact supporting paragraphs (with page ranges) for a given control.
+        </p>
+      </div>
+
+      <div class="pg-row">
+        <div class="card">
+          <h2>RAG — Ingest Security Document</h2>
+          <div class="pg-muted pg-small" style="margin-bottom: 0.75rem;">
+            Uploads a PDF/DOCX/MD/TXT, extracts text, chunks it, generates embeddings, and stores it for semantic search.
+            Calls: <code>POST /ai/docs/ingest</code>
+          </div>
+
+          <label>Title</label>
+          <input id="ragTitle" type="text" placeholder="Access Control Policy" />
+
+          <label>Doc Type</label>
+          <select id="ragDocType">
+            <option value="policy" selected>policy</option>
+            <option value="procedure">procedure</option>
+            <option value="ssp">ssp</option>
+            <option value="scan">scan</option>
+            <option value="other">other</option>
+          </select>
+
+          <label>Account ID (optional)</label>
+          <input id="ragAccountId" type="text" placeholder="123456789012" />
+
+          <label>File (PDF/DOCX/MD/TXT)</label>
+          <input id="ragFile" type="file" />
+
+          <div class="pg-actions">
+            <button class="btn btn-primary" id="ragIngestBtn" type="button">
+              Ingest
+              <span class="spinner" id="ragIngestSpinner"></span>
+            </button>
+          </div>
+
+          <div class="alert alert-info pg-small" id="ragIngestHint">
+            Upload a policy or SSP PDF, then use the Search/Control Evidence tools to retrieve auditor-ready citations.
+          </div>
+          <pre class="evidence-block pg-output" id="ragIngestOut"></pre>
+        </div>
+
+        <div class="card">
+          <h2>RAG — Search</h2>
+          <div class="pg-muted pg-small" style="margin-bottom: 0.75rem;">
+            Semantic search across uploaded documents.
+            Calls: <code>POST /ai/docs/search</code>
+          </div>
+
+          <label>Query</label>
+          <input id="ragQuery" type="text" placeholder="multi-factor authentication, MFA, Duo, YubiKey" />
+
+          <label>Top K</label>
+          <input id="ragTopK" type="number" value="8" min="1" max="25" />
+
+          <div class="pg-actions">
+            <button class="btn btn-primary" id="ragSearchBtn" type="button">
+              Search
+              <span class="spinner" id="ragSearchSpinner"></span>
+            </button>
+            <button class="btn btn-secondary" id="ragAnswerBtn" type="button">
+              Generate Reply
+              <span class="spinner" id="ragAnswerSpinner"></span>
+            </button>
+          </div>
+
+          <div class="alert alert-info pg-small" id="ragSearchHint">
+            Try: “MFA enforcement”, “password policy”, “encryption at rest”, “incident reporting timeline”.
+          </div>
+          <pre class="evidence-block pg-output" id="ragSearchOut"></pre>
+
+          <div class="alert alert-info pg-small" id="ragAnswerHint" style="margin-top: 0.75rem;">
+            Uses the retrieved passages as context and asks GPT-5 to answer your question with citations.
+            Calls: <code>POST /ai/docs/answer</code>
+          </div>
+          <div class="narrative-output pg-output" id="ragAnswerOut"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Docs → Control Evidence</h2>
+        <p class="pg-muted pg-small">
+          Uses the selected NIST control definition from your DB to search uploaded documentation for supporting paragraphs.
+          Calls: <code>POST /ai/docs/control-evidence</code>
+        </p>
+
+        <label>Control</label>
+        <select id="controlSelect">
+          <option value="" selected disabled>Loading controls…</option>
+        </select>
+
+        <label>Top K</label>
+        <input id="controlTopK" type="number" value="8" min="1" max="25" />
+
+        <div class="pg-actions">
+          <button class="btn btn-primary" id="controlEvidenceBtn" type="button">
+            Find Evidence
+            <span class="spinner" id="controlEvidenceSpinner"></span>
+          </button>
+          <span class="pg-muted pg-small" id="controlsLoadStatus"></span>
+        </div>
+
+        <div class="alert alert-info pg-small" id="controlEvidenceHint">
+          Pick <strong>IA-2</strong> to find MFA language, or <strong>AC-8</strong> to find warning banner references (if present).
+        </div>
+        <pre class="evidence-block pg-output" id="controlEvidenceOut"></pre>
+      </div>
+    </section>
+
+    <!-- 2) Sensitive -->
+    <section id="sensitive" class="pg-section pg-only-active">
+      <div class="card">
+        <h2>2) Sensitive Data Locations</h2>
+        <p class="pg-muted">
+          <strong>Requirement #2:</strong> Identify where Federal data could live by analyzing <em>ingested AWS evidence</em>
+          (S3/RDS metadata, tags, and posture flags like encryption/public exposure).
+        </p>
+      </div>
+
+      <div class="pg-row">
+      <div class="card">
+        <h2>Sensitive Data — Locations (AWS Evidence)</h2>
+        <div class="pg-muted pg-small" style="margin-bottom: 0.75rem;">
+          Calls: <code>POST /ai/data/sensitive-locations</code>
+        </div>
+
+        <label>Account ID</label>
+        <input id="sensAccountId" type="text" placeholder="123456789012" />
+
+        <label>Ingestion Run ID (optional)</label>
+        <input id="sensRunId" type="text" placeholder="UUID or blank for latest" />
+
+        <div class="pg-actions">
+          <button class="btn btn-primary" id="sensBtn" type="button">
+            Analyze
+            <span class="spinner" id="sensSpinner"></span>
+          </button>
+        </div>
+
+        <div class="alert alert-info pg-small" id="sensHint">
+          This flags “risk hotspots” using deterministic signals (tags/names/posture). It does not inspect object contents.
+          (Macie integration can be added next.)
+        </div>
+        <pre class="evidence-block pg-output" id="sensOut"></pre>
+      </div>
+
+      <div class="card">
+        <h2>Macie — Sensitive Data Findings (S3)</h2>
+        <div class="pg-muted pg-small" style="margin-bottom: 0.75rem;">
+          Calls: <code>POST /ai/data/macie/findings</code>
+        </div>
+
+        <label>Account ID</label>
+        <input id="macieAccountId" type="text" placeholder="123456789012" />
+
+        <label>Role ARN (assume role)</label>
+        <input id="macieRoleArn" type="text" placeholder="arn:aws:iam::123456789012:role/SecurityAudit" />
+
+        <label>Region</label>
+        <input id="macieRegion" type="text" value="us-east-1" />
+
+        <label>Since days</label>
+        <input id="macieSinceDays" type="number" value="30" min="1" max="365" />
+
+        <div class="pg-actions">
+          <button class="btn btn-primary" id="macieBtn" type="button">
+            Query Macie
+            <span class="spinner" id="macieSpinner"></span>
+          </button>
+        </div>
+
+        <div class="alert alert-info pg-small" id="macieHint">
+          Macie must be enabled in the target account/region, and the assumed role must allow <code>macie2:ListFindings</code> and <code>macie2:GetFindings</code>.
+        </div>
+        <pre class="evidence-block pg-output" id="macieOut"></pre>
+      </div>
+      </div>
+    </section>
+
+    <!-- 3) Vendors -->
+    <section id="vendors" class="pg-section pg-only-active">
+      <div class="card">
+        <h2>3) Vendors → Categories</h2>
+        <p class="pg-muted">
+          <strong>Requirement #3:</strong> Build the SSP “Security and Management Technologies” table by extracting tools/vendors
+          from AWS evidence (+ optional doc snippets) and returning strict JSON + HTML table.
+        </p>
+      </div>
+
+      <div class="card">
+        <h2>Vendors / Tech Map</h2>
+        <div class="pg-muted pg-small" style="margin-bottom: 0.75rem;">
+          Calls: <code>POST /ai/vendors/map</code>
+        </div>
+
+        <label>Account ID</label>
+        <input id="vendorAccountId" type="text" placeholder="123456789012" />
+
+        <label>Ingestion Run ID (optional)</label>
+        <input id="vendorRunId" type="text" placeholder="UUID or blank for latest" />
+
+        <label style="text-transform:none; letter-spacing:0;">
+          <input id="vendorIncludeSnippets" type="checkbox" />
+          Include doc snippets (RAG)
+        </label>
+
+        <div class="pg-actions">
+          <button class="btn btn-primary" id="vendorBtn" type="button">
+            Extract Vendor Map
+            <span class="spinner" id="vendorSpinner"></span>
+          </button>
+        </div>
+
+        <div class="alert alert-info pg-small" id="vendorHint">
+          Output includes <code>vendor_map</code> (strict JSON) and <code>html_table</code> for direct SSP rendering.
+        </div>
+        <pre class="evidence-block pg-output" id="vendorOut"></pre>
+
+        <div class="card pg-output" id="vendorTableWrap" style="margin-top: 1rem;">
+          <h3>Rendered Vendor Table (SSP-ready)</h3>
+          <p class="pg-muted pg-small" style="margin-bottom: 0.75rem;">
+            This renders <code>html_table</code> as an actual table (safe text-only rebuild in-browser).
+          </p>
+          <div class="pg-table-wrap" id="vendorTableOut"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4) Scans -->
+    <section id="scans" class="pg-section pg-only-active">
+      <div class="card">
+        <h2>4) Scan Results → Controls</h2>
+        <p class="pg-muted">
+          <strong>Requirement #4:</strong> Ingest scanner findings (Nessus CSV / SecurityHub JSON) and map failures to relevant
+          NIST controls (deterministic rules first; optional LLM fallback).
+        </p>
+      </div>
+
+      <div class="card">
+        <h2>Scans — Ingest + Map</h2>
+        <div class="pg-muted pg-small" style="margin-bottom: 0.75rem;">
+          Ingest: <code>POST /ai/scans/ingest</code> &nbsp;|&nbsp; Map: <code>POST /ai/scans/map-controls</code>
+        </div>
+
+        <label>Source</label>
+        <select id="scanSource">
+          <option value="nessus" selected>nessus (CSV)</option>
+          <option value="securityhub">securityhub (JSON)</option>
+        </select>
+
+        <label>Account ID (optional)</label>
+        <input id="scanAccountId" type="text" placeholder="123456789012" />
+
+        <label>File</label>
+        <input id="scanFile" type="file" />
+
+        <div class="pg-actions">
+          <button class="btn btn-primary" id="scanIngestBtn" type="button">
+            Ingest Findings
+            <span class="spinner" id="scanIngestSpinner"></span>
+          </button>
+          <button class="btn btn-secondary" id="scanMapBtn" type="button">
+            Map Unmapped
+            <span class="spinner" id="scanMapSpinner"></span>
+          </button>
+        </div>
+
+        <div class="alert alert-info pg-small" id="scanHint">
+          Rule-based mapping covers common items (e.g., warning banner → AC-8). LLM fallback can be used to reduce manual work.
+        </div>
+        <pre class="evidence-block pg-output" id="scanOut"></pre>
+      </div>
+    </section>
+
+    <!-- 5) Policies -->
+    <section id="policies" class="pg-section pg-only-active">
+      <div class="card">
+        <h2>5) Generate Missing Policies</h2>
+        <p class="pg-muted">
+          <strong>Requirement #5:</strong> Generate baseline policies/procedures and write them into the repo using discovered vendor/tooling context.
+        </p>
+      </div>
+
+      <div class="card">
+        <h2>Policy Generator</h2>
+        <div class="pg-muted pg-small" style="margin-bottom: 0.75rem;">
+          Calls: <code>POST /ai/policies/generate</code> (writes to <code>@docs/generated_policies/</code>)
+        </div>
+
+        <label>Policy Template</label>
+        <select id="policyId">
+          <option value="access_control" selected>access_control</option>
+          <option value="incident_response">incident_response</option>
+          <option value="vulnerability_management">vulnerability_management</option>
+        </select>
+
+        <label>Account ID</label>
+        <input id="policyAccountId" type="text" placeholder="123456789012" />
+
+        <label>Ingestion Run ID (optional)</label>
+        <input id="policyRunId" type="text" placeholder="UUID or blank for latest" />
+
+        <div class="pg-actions">
+          <button class="btn btn-primary" id="policyBtn" type="button">
+            Generate Policy
+            <span class="spinner" id="policySpinner"></span>
+          </button>
+        </div>
+
+        <div class="alert alert-info pg-small" id="policyHint">
+          This writes a Markdown policy file into the repo. Next iteration can add auto-commit to GitHub/GitLab.
+        </div>
+        <pre class="evidence-block pg-output" id="policyOut"></pre>
+      </div>
+    </section>
+
+    <!-- 6) POAM -->
+    <section id="poam" class="pg-section pg-only-active">
+      <div class="card">
+        <h2>6) Exceptions / POA&amp;M Validation</h2>
+        <p class="pg-muted">
+          <strong>Requirement #6:</strong> Ingest a POA&amp;M/deviation list and validate whether vendor fixes exist using external intelligence (NVD CVE API).
+        </p>
+      </div>
+
+      <div class="card">
+        <h2>POA&amp;M — Ingest + Validate</h2>
+        <div class="pg-muted pg-small" style="margin-bottom: 0.75rem;">
+          Ingest: <code>POST /ai/poam/ingest</code> &nbsp;|&nbsp; Validate: <code>POST /ai/poam/validate</code>
+        </div>
+
+        <label>Account ID (optional)</label>
+        <input id="poamAccountId" type="text" placeholder="123456789012" />
+
+        <label>POA&amp;M CSV</label>
+        <input id="poamFile" type="file" />
+
+        <div class="pg-actions">
+          <button class="btn btn-primary" id="poamIngestBtn" type="button">
+            Ingest POA&amp;M
+            <span class="spinner" id="poamIngestSpinner"></span>
+          </button>
+        </div>
+
+        <label style="margin-top: 0.75rem;">Validate CVEs (comma/newline separated)</label>
+        <input id="poamCves" type="text" placeholder="CVE-2021-44228, CVE-2023-1234" />
+
+        <div class="pg-actions">
+          <button class="btn btn-secondary" id="poamValidateBtn" type="button">
+            Validate via NVD
+            <span class="spinner" id="poamValidateSpinner"></span>
+          </button>
+        </div>
+
+        <div class="alert alert-info pg-small" id="poamHint">
+          Validation returns the raw NVD payload (for engineering triage). You can later add “status changed” flags + reminders.
+        </div>
+        <pre class="evidence-block pg-output" id="poamOut"></pre>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const toJson = (x) => JSON.stringify(x, null, 2);
+
+  async function postJson(url, body) {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {})
+    });
+    const text = await resp.text();
+    try { return { ok: resp.ok, status: resp.status, json: JSON.parse(text) }; }
+    catch { return { ok: resp.ok, status: resp.status, text }; }
+  }
+
+  async function postForm(url, formData) {
+    const resp = await fetch(url, { method: 'POST', body: formData });
+    const text = await resp.text();
+    try { return { ok: resp.ok, status: resp.status, json: JSON.parse(text) }; }
+    catch { return { ok: resp.ok, status: resp.status, text }; }
+  }
+
+  function show(outEl, result) {
+    outEl.textContent = toJson(result);
+  }
+
+  function showOutput(outId, hintId, payload) {
+    const outEl = $(outId);
+    const hintEl = $(hintId);
+    if (hintEl) hintEl.style.display = 'none';
+    if (outEl) {
+      outEl.style.display = 'block';
+      outEl.textContent = toJson(payload);
+    }
+  }
+
+  function setLoading(btnId, spinnerId, isLoading, idleText) {
+    const btn = $(btnId);
+    const sp = $(spinnerId);
+    if (!btn) return;
+    btn.disabled = Boolean(isLoading);
+    if (sp) sp.style.display = isLoading ? 'inline-block' : 'none';
+    if (!isLoading && idleText) {
+      // Keep text stable even after multiple clicks.
+      btn.childNodes[0].textContent = idleText;
+    }
+  }
+
+  // Controls dropdown
+  async function loadControls() {
+    const status = $('controlsLoadStatus');
+    try {
+      if (status) status.textContent = 'Loading controls…';
+      const resp = await fetch('/ai/controls');
+      const controls = await resp.json();
+      const sel = $('controlSelect');
+      sel.innerHTML = '';
+      for (const c of controls) {
+        const opt = document.createElement('option');
+        opt.value = c.control_id;
+        opt.textContent = `${c.control_id} — ${c.title}`;
+        sel.appendChild(opt);
+      }
+      if (status) status.textContent = `Loaded ${controls.length} controls`;
+    } catch (e) {
+      const sel = $('controlSelect');
+      sel.innerHTML = '<option value=\"\" selected disabled>Failed to load controls</option>';
+      if (status) status.textContent = 'Failed to load controls';
+    }
+  }
+  loadControls();
+
+  // Sidebar tabs: show only the selected section
+  const sections = Array.from(document.querySelectorAll('.pg-only-active'));
+  const tabs = Array.from(document.querySelectorAll('.pg-tab'));
+
+  function activateTab(id) {
+    const target = (id || '').replace('#', '') || 'rag';
+    for (const s of sections) s.classList.toggle('pg-active', s.id === target);
+    for (const a of tabs) a.classList.toggle('pg-active', a.getAttribute('data-target') === target);
+  }
+
+  for (const a of tabs) {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      const target = a.getAttribute('data-target') || 'rag';
+      history.replaceState(null, '', `#${target}`);
+      activateTab(target);
+    });
+  }
+
+  window.addEventListener('hashchange', () => activateTab(location.hash));
+  activateTab(location.hash);
+
+  // RAG ingest
+  $('ragIngestBtn').addEventListener('click', async () => {
+    const f = $('ragFile').files[0];
+    if (!f) return showOutput('ragIngestOut', 'ragIngestHint', { error: 'Select a file first.' });
+    setLoading('ragIngestBtn', 'ragIngestSpinner', true);
+
+    const fd = new FormData();
+    fd.append('file', f, f.name);
+    fd.append('title', $('ragTitle').value || f.name);
+    fd.append('doc_type', $('ragDocType').value || 'policy');
+    const acct = ($('ragAccountId').value || '').trim();
+    if (acct) fd.append('account_id', acct);
+
+    try {
+      const res = await postForm('/ai/docs/ingest', fd);
+      showOutput('ragIngestOut', 'ragIngestHint', res);
+    } finally {
+      setLoading('ragIngestBtn', 'ragIngestSpinner', false, 'Ingest');
+    }
+  });
+
+  // RAG search
+  $('ragSearchBtn').addEventListener('click', async () => {
+    setLoading('ragSearchBtn', 'ragSearchSpinner', true);
+    try {
+      const res = await postJson('/ai/docs/search', {
+        query: $('ragQuery').value,
+        top_k: Number($('ragTopK').value || 8)
+      });
+      showOutput('ragSearchOut', 'ragSearchHint', res);
+    } finally {
+      setLoading('ragSearchBtn', 'ragSearchSpinner', false, 'Search');
+    }
+  });
+
+  // RAG answer with GPT-5 (uses RAG search results server-side)
+  $('ragAnswerBtn').addEventListener('click', async () => {
+    setLoading('ragAnswerBtn', 'ragAnswerSpinner', true);
+    try {
+      const res = await postJson('/ai/docs/answer', {
+        question: $('ragQuery').value,
+        top_k: Number($('ragTopK').value || 8)
+      });
+      const hint = $('ragAnswerHint');
+      if (hint) hint.style.display = 'none';
+      const box = $('ragAnswerOut');
+      if (box) {
+        box.style.display = 'block';
+        if (res && res.json && res.json.answer) {
+          const model = (res.json.model || '').toString();
+          const cites = Array.isArray(res.json.citations) ? res.json.citations : [];
+          const citeHtml = cites.map(c =>
+            `<li><strong>${(c.title || c.source_path || 'Document')}</strong> (p. ${c.page_start || '?'}-${c.page_end || '?'})</li>`
+          ).join('');
+          box.innerHTML = `
+            <div style="margin-bottom:0.5rem; color: var(--text-muted); font-size:0.85rem;">
+              Model: <code>${model || 'unknown'}</code>
+            </div>
+            <div style="white-space: pre-wrap;">${(res.json.answer || '').toString()}</div>
+            ${cites.length ? `<div style="margin-top:0.9rem;"><strong>Citations</strong><ul>${citeHtml}</ul></div>` : ''}
+          `;
+        } else {
+          box.textContent = toJson(res);
+        }
+      }
+    } finally {
+      setLoading('ragAnswerBtn', 'ragAnswerSpinner', false, 'Generate Reply');
+    }
+  });
+
+  // Control evidence
+  $('controlEvidenceBtn').addEventListener('click', async () => {
+    setLoading('controlEvidenceBtn', 'controlEvidenceSpinner', true);
+    try {
+      const cid = $('controlSelect').value;
+      const res = await postJson('/ai/docs/control-evidence', {
+        control_id: cid,
+        top_k: Number($('controlTopK').value || 8)
+      });
+      showOutput('controlEvidenceOut', 'controlEvidenceHint', res);
+    } finally {
+      setLoading('controlEvidenceBtn', 'controlEvidenceSpinner', false, 'Find Evidence');
+    }
+  });
+
+  // Sensitive locations
+  $('sensBtn').addEventListener('click', async () => {
+    setLoading('sensBtn', 'sensSpinner', true);
+    try {
+      const res = await postJson('/ai/data/sensitive-locations', {
+        account_id: ($('sensAccountId').value || '').trim(),
+        ingestion_run_id: ($('sensRunId').value || '').trim() || null
+      });
+      showOutput('sensOut', 'sensHint', res);
+    } finally {
+      setLoading('sensBtn', 'sensSpinner', false, 'Analyze');
+    }
+  });
+
+  // Macie findings (hard evidence)
+  $('macieBtn').addEventListener('click', async () => {
+    setLoading('macieBtn', 'macieSpinner', true);
+    try {
+      const res = await postJson('/ai/data/macie/findings', {
+        account_id: ($('macieAccountId').value || '').trim(),
+        role_arn: ($('macieRoleArn').value || '').trim(),
+        region: ($('macieRegion').value || 'us-east-1').trim(),
+        since_days: Number($('macieSinceDays').value || 30),
+        max_findings: 50
+      });
+      showOutput('macieOut', 'macieHint', res);
+    } finally {
+      setLoading('macieBtn', 'macieSpinner', false, 'Query Macie');
+    }
+  });
+
+  // Vendor map
+  $('vendorBtn').addEventListener('click', async () => {
+    setLoading('vendorBtn', 'vendorSpinner', true);
+    try {
+      const res = await postJson('/ai/vendors/map', {
+        account_id: ($('vendorAccountId').value || '').trim(),
+        ingestion_run_id: ($('vendorRunId').value || '').trim() || null,
+        include_doc_snippets: Boolean($('vendorIncludeSnippets').checked)
+      });
+      showOutput('vendorOut', 'vendorHint', res);
+
+      // Render the vendor HTML table nicely (and safely).
+      const wrap = $('vendorTableWrap');
+      const out = $('vendorTableOut');
+      const html = res && res.json && res.json.html_table ? String(res.json.html_table) : '';
+      if (wrap && out && html) {
+        // Safety: rebuild a plain table from text content only.
+        const tmp = document.createElement('div');
+        tmp.innerHTML = html;
+        const t = tmp.querySelector('table');
+        if (t) {
+          const rebuilt = document.createElement('table');
+
+          const thead = t.querySelector('thead');
+          if (thead) {
+            const newHead = document.createElement('thead');
+            for (const tr of Array.from(thead.querySelectorAll('tr'))) {
+              const ntr = document.createElement('tr');
+              for (const th of Array.from(tr.querySelectorAll('th'))) {
+                const nth = document.createElement('th');
+                nth.textContent = (th.textContent || '').trim();
+                ntr.appendChild(nth);
+              }
+              newHead.appendChild(ntr);
+            }
+            rebuilt.appendChild(newHead);
+          }
+
+          const tbody = t.querySelector('tbody');
+          if (tbody) {
+            const newBody = document.createElement('tbody');
+            for (const tr of Array.from(tbody.querySelectorAll('tr'))) {
+              const ntr = document.createElement('tr');
+              for (const td of Array.from(tr.querySelectorAll('td'))) {
+                const ntd = document.createElement('td');
+                ntd.textContent = (td.textContent || '').trim();
+                ntr.appendChild(ntd);
+              }
+              newBody.appendChild(ntr);
+            }
+            rebuilt.appendChild(newBody);
+          }
+
+          out.innerHTML = '';
+          out.appendChild(rebuilt);
+          wrap.style.display = 'block';
+        }
+      }
+    } finally {
+      setLoading('vendorBtn', 'vendorSpinner', false, 'Extract Vendor Map');
+    }
+  });
+
+  // Policy generation
+  $('policyBtn').addEventListener('click', async () => {
+    setLoading('policyBtn', 'policySpinner', true);
+    try {
+      const res = await postJson('/ai/policies/generate', {
+        policy_id: $('policyId').value,
+        account_id: ($('policyAccountId').value || '').trim(),
+        ingestion_run_id: ($('policyRunId').value || '').trim() || null
+      });
+      showOutput('policyOut', 'policyHint', res);
+    } finally {
+      setLoading('policyBtn', 'policySpinner', false, 'Generate Policy');
+    }
+  });
+
+  // Scan ingest
+  $('scanIngestBtn').addEventListener('click', async () => {
+    const f = $('scanFile').files[0];
+    if (!f) return showOutput('scanOut', 'scanHint', { error: 'Select a scan file first.' });
+    setLoading('scanIngestBtn', 'scanIngestSpinner', true);
+    const fd = new FormData();
+    fd.append('source', $('scanSource').value);
+    const acct = ($('scanAccountId').value || '').trim();
+    if (acct) fd.append('account_id', acct);
+    fd.append('file', f, f.name);
+    try {
+      const res = await postForm('/ai/scans/ingest', fd);
+      showOutput('scanOut', 'scanHint', res);
+    } finally {
+      setLoading('scanIngestBtn', 'scanIngestSpinner', false, 'Ingest Findings');
+    }
+  });
+
+  $('scanMapBtn').addEventListener('click', async () => {
+    setLoading('scanMapBtn', 'scanMapSpinner', true);
+    try {
+      const res = await postJson('/ai/scans/map-controls', { limit: 200, use_llm_fallback: true });
+      showOutput('scanOut', 'scanHint', res);
+    } finally {
+      setLoading('scanMapBtn', 'scanMapSpinner', false, 'Map Unmapped');
+    }
+  });
+
+  // POAM ingest
+  $('poamIngestBtn').addEventListener('click', async () => {
+    const f = $('poamFile').files[0];
+    if (!f) return showOutput('poamOut', 'poamHint', { error: 'Select a POA&M CSV first.' });
+    setLoading('poamIngestBtn', 'poamIngestSpinner', true);
+    const fd = new FormData();
+    const acct = ($('poamAccountId').value || '').trim();
+    if (acct) fd.append('account_id', acct);
+    fd.append('file', f, f.name);
+    try {
+      const res = await postForm('/ai/poam/ingest', fd);
+      showOutput('poamOut', 'poamHint', res);
+    } finally {
+      setLoading('poamIngestBtn', 'poamIngestSpinner', false, 'Ingest POA&M');
+    }
+  });
+
+  $('poamValidateBtn').addEventListener('click', async () => {
+    setLoading('poamValidateBtn', 'poamValidateSpinner', true);
+    try {
+      const raw = ($('poamCves').value || '').replace(/;/g, ',');
+      const cves = raw.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+      const res = await postJson('/ai/poam/validate', { cve_ids: cves });
+      showOutput('poamOut', 'poamHint', res);
+    } finally {
+      setLoading('poamValidateBtn', 'poamValidateSpinner', false, 'Validate via NVD');
+    }
+  });
+})();
+</script>
+{% endblock %}
+
