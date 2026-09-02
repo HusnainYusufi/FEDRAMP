@@ -1,3 +1,75 @@
+# FedRAMP Ingestion Core — with Assessment AI Narrative Agent
+
+A backend compliance engine that pulls configuration evidence from AWS accounts and uses an LLM agent
+to generate FedRAMP System Security Plan (SSP) narratives from that evidence.
+
+> **⚠️ This is a fork of `HusnainYusufi/VestaAiProject`.** The two repositories share identical git
+> history through commit `58bccb6` ("finalize-demo", 9 Feb 2026) and then diverged. **VestaAiProject
+> is the more advanced line** (47 commits to this repo's 22) and contains subsystems absent here —
+> notably the pgvector RAG pipeline, the Macie evidence service and the vendor mapper. This branch
+> has its own additions (`scripts/seed_ssp_style_examples_ac2.py`, a separate frontend directory), so
+> it is not a strict subset. Check both before choosing one to continue from.
+
+## What problem it solves
+
+FedRAMP authorisation requires a written narrative for every security control, explaining how the
+system satisfies it. Doing that by hand takes months and the result is stale as soon as
+infrastructure changes. This engine reads the live AWS environment, normalises what it finds, and has
+an LLM write control narratives grounded in that evidence.
+
+## How it uses AI
+
+### Agentic narrative generation (LangGraph)
+
+Narrative writing is an explicit state machine rather than a single prompt
+(`app/services/ai_agent/narrative/graph.py`):
+
+```
+load_control ─▶ analyze_control ─▶ plan_tool_calls ─▶ execute_tools
+                                                          │
+      parse_output ◀── write_narrative ◀── build_prompt ◀──┴── evaluate_compliance
+```
+
+The important design decision is in `plan_tool_calls` / `execute_tools`: the LLM is given **tools to
+query PostgreSQL for evidence** rather than having evidence hardcoded per control. Adding controls
+needs no new code — the agent determines what to fetch for the control in front of it.
+
+Supporting modules:
+
+- `controls_repo.py` — loads official control text from the `fedramp_controls` table, seeded from the
+  FedRAMP High baseline spreadsheet via `scripts/load_fedramp_controls.py`
+- `prompt_engine.py` — assembles the prompt from control text plus retrieved evidence
+- `output_parser.py` — parses generated Markdown into a structured record for `ssp_narratives`
+- `llm_client.py` — `ChatOpenAI` wrapper, default temperature 0.3
+- `template_direct.py` — a template-driven path that bypasses the agent for simpler controls
+
+### Policy generation
+
+`ai_agent/policies/` produces compliance policy documents from templates and gathered evidence.
+
+## Evidence ingestion (the non-AI half)
+
+```
+AWS Account ──▶ AWS Client ──▶ Normalizer ──▶ PostgreSQL
+(SecurityAudit)  (AssumeRole)  (canonical)     (JSONB)
+```
+
+`app/services/aws/` assumes a read-only `SecurityAudit` IAM role and harvests IAM, EC2, VPC, S3 and
+RDS configuration via boto3. **Raw AWS JSON is never stored** — everything is normalised into
+canonical compliance objects first.
+
+## Stack
+
+FastAPI · SQLAlchemy 2.x async + psycopg3 · PostgreSQL · Alembic · LangGraph · LangChain-OpenAI ·
+boto3 · structlog · pytest · Docker Compose. Dashboard at `GET /ui/`.
+
+Tests cover the health endpoint, prompt engine, normalizer, output parser, ingest API and
+architecture-diagram API.
+
+---
+
+<!-- The original project README is preserved below. -->
+
 # FedRAMP Ingestion Core (with Assessment AI Narrative Agent)
 
 A backend compliance data engine that fetches, normalizes, and stores AWS configuration data (**Use Case 2**) plus an Assessment AI narrative agent that generates FedRAMP SSP narratives from that evidence (**Use Case 1**).
