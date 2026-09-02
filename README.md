@@ -3,13 +3,6 @@
 A backend compliance engine that pulls configuration evidence from AWS accounts and uses an LLM agent
 to generate FedRAMP System Security Plan (SSP) narratives from that evidence.
 
-> **⚠️ This is a fork of `HusnainYusufi/VestaAiProject`.** The two repositories share identical git
-> history through commit `58bccb6` ("finalize-demo", 9 Feb 2026) and then diverged. **VestaAiProject
-> is the more advanced line** (47 commits to this repo's 22) and contains subsystems absent here —
-> notably the pgvector RAG pipeline, the Macie evidence service and the vendor mapper. This branch
-> has its own additions (`scripts/seed_ssp_style_examples_ac2.py`, a separate frontend directory), so
-> it is not a strict subset. Check both before choosing one to continue from.
-
 ## What problem it solves
 
 FedRAMP authorisation requires a written narrative for every security control, explaining how the
